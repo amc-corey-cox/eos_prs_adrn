@@ -21,7 +21,10 @@ chmod +x tabix
 
 PATH=$tmp_dir/:$PATH
 
-base_dir=~/gcs_mnt/hdcekabarnesadrn1/ADRN_MEGA_META_SEVERITY/b_EA_MEGA/imputed
+mkdir -p gcs_mnt/hdcekabarnesadrn1/
+gcsfuse --implicit-dirs hdcekabarnesadrn1 gcs_mnt/hdcekabarnesadrn1/
+
+base_dir=gcs_mnt/hdcekabarnesadrn1/ADRN_MEGA_META_SEVERITY/b_EA_MEGA/imputed
 for i in {22..1}; do
   if [[ -f "${base_dir}/chr${i}.dose.vcf.gz.tbi" ]]; then continue; fi
   echo tabix -f "${base_dir}/chr${i}.dose.vcf.gz"
