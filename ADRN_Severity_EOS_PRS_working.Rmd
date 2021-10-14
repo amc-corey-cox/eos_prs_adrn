@@ -1,0 +1,374 @@
+---
+title: "ADRN Severity EOS PRS"
+author: "Corey Cox"
+date: "4/19/2021"
+output: 
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(ggsignif)
+library(pROC)
+library(fmsb)
+library(table1)
+library(lm.beta)
+
+formatCaption <- function(txt) { str_c('<p style="font-weight:bold;font-size:1.5em;">', txt, '<p>') }
+```
+
+
+### MEGA EA PRS AD Violin Plot
+Create data files for violin plots
+
+```{r EA_MEGA_AD}
+# Rerun clinical characteristics with EA only pulling out ADEH+, ADEH-, and Non-Atopic
+eos_prs <- read_table("beta_score_eos_prs_EA_MEGA.profile", col_types = "ccdddd")
+# Phenotype adjusted by age/sex and batch
+pheno <- read_tsv("ADRN_MEGA_EA_1626_adjusted_severity_phenotypes.txt", col_types = "dcdcddcdddddd")
+
+eos_phenos <- eos_prs %>%
+  mutate(SampleID = str_extract(IID, "\\d{10}") %>% as.double) %>%
+  left_join(pheno, by = "SampleID") %>%
+  filter(! is.na(Pheno_ADNA))
+
+eos_phenos %>%
+  mutate(IID = SampleID, true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_phenos %>%
+  mutate(IID = SampleID, Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+
+# gg_prs_violin_ca("MEGA EA EOS PRS vs AD Case/Control")
+
+# eos_pheno_data <- eos_phenos %>%
+#   select(IID = SampleID, SCORE, Age = AGE, Sex = GENDER, Pheno_ADNA, RL, EASI, EOS, tIgE)
+# 
+# tmp <- gg_prs_violin(eos_pheno_data, pheno = "Pheno_ADNA", score = "SCORE", sev = "Age")
+```
+### MEGA EA EASI, EOS, RL, and tIgE Scatter Plot with Linear Fit
+
+```{r EA_MEGA_scatter}
+ggplot(eos_phenos, aes(x=EOS, y=SCORE, color = DIAGROUP)) +
+  geom_point() + geom_smooth(method=lm, se=FALSE) +
+  ggtitle("MEGA EA EOS PRS SCORE vs ADRN EOS -- Cases & Controls")
+
+gg_r_scatter <- function(.data, score, pheno, color, title_prefix) {
+  m <- lm( as.formula(str_c(pheno, " ~ ", score)), .data)
+  r2 <- str_c("r2 = ", format(summary(m)$r.squared, digits = 3))
+  p <- str_c("p-value = ", format(summary(m)$coefficients[2,4] %>% unname , digits = 3))
+  slope <- format(summary(m)$coefficients[2,2] %>% unname, digits = 3)
+  conf_low <- format(confint(m, score, level=0.95)[1], digits = 3)
+  conf_high <- format(confint(m, score, level=0.95)[2], digits = 3)
+  slope_conf <- str_c("slope = ", slope ," [", conf_low, ",", conf_high, "]")
+  
+  text_label <- str_c(r2, " ", p)
+
+  ggplot(.data, aes_string(x = score, y = pheno, color = color)) +
+    geom_point() + geom_smooth(method=lm, se=FALSE) +
+    geom_text(label = text_label, x = -Inf, y = Inf, hjust = -0.25, vjust = 2) +
+    geom_text(label = slope_conf, x = -Inf, y = Inf, hjust = -0.25, vjust = 3.5) +
+    ggtitle(str_c(title_prefix, " -- ", score, " vs ", pheno)) +
+    scale_colour_gradientn(name = paste0("", color), colours = rev(c("#D7191C","#D7191C","#FDAE61","#ABDDA4","#2B83BA","#2B83BA")),
+                           values = rescale(c(-0.03780071,-0.01890036,0.422549,1.112655,1.624349,1.868488), to = c(0, 1)),
+                           na.value="snow4")+
+    labs(colour=color)
+}
+
+m <- lm(EOS ~ scale(SCORE), eos_phenos_cases)
+summary(m)
+confint(m, 'SCORE', level=0.95)[2]
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP != "Non-Atopic")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA EA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "tIgE", "EOS", "MEGA EA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EASI", "EOS", "MEGA EA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "RL", "EOS", "MEGA EA Cases EH(+) & EH(-)")
+
+eos_phenos_cases %>% gg_r_scatter("tIgE", "EOS", "EOS", "MEGA EA Cases EH(+) & EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH-")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA EA Cases EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH+")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA EA Cases EH(+)")
+
+eos_phenos_controls <- eos_phenos %>% filter(DIAGROUP == "Non-Atopic")
+eos_phenos_controls %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA EA Controls")
+
+eos_phenos_controls %>% gg_r_scatter("tIgE", "EOS", "SCORE", "MEGA EA Controls")
+# Run EOS vs tIgE scatter
+```
+
+### MEGA EA EASI, EOS, RL, and tIgE Grouped Violin Plots
+
+```{r EA_MEGA_grouped}
+eos_grouped_phenos <- eos_phenos %>%
+  mutate(RL_group = ifelse(RL < 14.526365, 1, 2),
+         # EASI_group = ifelse(EASI < 0.6993143, 1, 2)) %>%
+         # EASI_group = ifelse(EASI < 1.017539, 1, 2)) %>%
+         EASI_group = ifelse(EASI < 1.3142468, 1, 2),
+  
+         # tIgE_group = ifelse(tIgE < 1.5085789, 1, 2)) %>%
+         # tIgE_group = ifelse(tIgE < 2.1804033, 1, 2)) %>%
+         tIgE_group = ifelse(tIgE < 2.9507443, 1, 2),
+  
+         EOS_group = ifelse(tIgE < 1.98294575, 1, 2)) %>%
+         # EOS_group = ifelse(tIgE < 2.29346412, 1, 2)) %>%
+         # EOS_group = ifelse(tIgE < 2.59029654, 1, 2)) %>%
+  filter(! is.na(tIgE_group))
+
+eos_grouped_phenos %>%
+  # mutate(IID = SampleID, true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  mutate(IID = SampleID, true_phens = EOS_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_grouped_phenos %>%
+  mutate(IID = SampleID, Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+```{r EA_OMNI_AD}
+eos_prs <- read_table("beta_score_eos_prs_EA_OMNI.profile", col_types = "ccdddd")
+pheno <- read_tsv("ADRN_MEGA_EA_1626_adjusted_severity_phenotypes.txt", col_types = "dcdcddcdddddd")
+
+eos_phenos <- eos_prs %>%
+  mutate(MEGA_ID = str_extract(IID, "LP\\d{7}-DNA_.\\d{2}")) %>%
+  left_join(pheno, by = "MEGA_ID") %>%
+  filter(! is.na(Pheno_ADNA))
+
+eos_phenos %>%
+  mutate(IID = SampleID, true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_phenos %>%
+  mutate(IID = SampleID, Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+```
+
+```{r EA_OMNI_scatter}
+ggplot(eos_phenos, aes(x=EOS, y=SCORE, color = DIAGROUP)) +
+  geom_point() + geom_smooth(method=lm, se=FALSE) +
+  ggtitle("OMNI EA Cases & Controls -- SCORE vs AD")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP != "Non-Atopic")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "OMNI EA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "tIgE", "EOS", "OMNI EA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EASI", "EOS", "OMNI EA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "RL", "EOS", "OMNI EA Cases EH(+) & EH(-)")
+
+eos_phenos_cases %>% gg_r_scatter("tIgE", "EOS", "EOS", "OMNI EA Cases EH(+) & EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH-")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "OMNI EA Cases EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH+")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "OMNI EA Cases EH(+)")
+
+eos_phenos_controls <- eos_phenos %>% filter(DIAGROUP == "Non-Atopic")
+eos_phenos_controls %>% gg_r_scatter("SCORE", "EOS", "tIgE", "OMNI EA Controls")
+
+eos_phenos_controls %>% gg_r_scatter("tIgE", "EOS", "SCORE", "OMNI EA Controls")
+```
+
+```{r EA_OMNI_grouped}
+eos_grouped_phenos <- eos_phenos %>%
+  mutate(RL_group = ifelse(RL < 14.526365, 1, 2),
+         # EASI_group = ifelse(EASI < 0.6993143, 1, 2)) %>%
+         # EASI_group = ifelse(EASI < 1.017539, 1, 2)) %>%
+         EASI_group = ifelse(EASI < 1.3142468, 1, 2),
+  
+         # tIgE_group = ifelse(tIgE < 1.3377471, 1, 2)) %>%
+         # tIgE_group = ifelse(tIgE < 1.9118220, 1, 2)) %>%
+         tIgE_group = ifelse(tIgE < 2.8043853, 1, 2)) %>%
+  filter(! is.na(tIgE_group))
+
+eos_grouped_phenos %>%
+  # mutate(IID = SampleID, true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  mutate(IID = SampleID, true_phens = tIgE_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_grouped_phenos %>%
+  mutate(IID = SampleID, Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+```
+
+# EA MEGA and OMNI 
+
+
+```{r EA_ALL_AD_pheno}
+# Rerun clinical characteristics with EA only pulling out ADEH+, ADEH-, and Non-Atopic
+eos_prs_mega <- read_table("beta_score_eos_prs_EA_MEGA.profile", col_types = "ccdddd")
+# Phenotype adjusted by age/sex and batch
+pheno <- read_tsv("ADRN_MEGA_EA_1626_adjusted_severity_phenotypes.txt", col_types = "dcdcddcdddddd")
+
+eos_phenos_mega <- eos_prs_mega %>%
+  mutate(SampleID = str_extract(IID, "\\d{10}") %>% as.double) %>%
+  left_join(pheno, by = "SampleID") %>%
+  filter(! is.na(Pheno_ADNA)) %>%
+  mutate(IID = SampleID) %>%
+  select(everything(), -SampleID)
+
+eos_prs_omni <- read_table("beta_score_eos_prs_EA_OMNI.profile", col_types = "ccdddd")
+
+eos_phenos_omni <- eos_prs_omni %>%
+  mutate(MEGA_ID = str_extract(IID, "LP\\d{7}-DNA_.\\d{2}")) %>%
+  left_join(pheno, by = "MEGA_ID") %>%
+  filter(! is.na(Pheno_ADNA)) %>%
+  mutate(IID = SampleID %>% as.double) %>%
+  select(everything(), -SampleID)
+
+eos_phenos <- bind_rows(eos_phenos_mega, eos_phenos_omni) %>%
+  mutate(SCORE = scale(SCORE))
+
+eos_phenos %>% table1(data = ., ~ GENDER + AGE + BATCH + EOS + tIgE + EASI + EOS + RL | DIAGROUP,
+         caption = formatCaption("MEGA European Ancestry Phenotypes and Demographics"))
+```
+
+```{r EA_ALL_AD_violin}
+eos_phenos %>%
+  mutate(true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_phenos %>%
+  mutate(Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+```
+
+```{r EA_ALL_scatter}
+ggplot(eos_phenos, aes(x=SCORE, y=EOS, color = DIAGROUP)) +
+  geom_point() + geom_smooth(method=lm, se=FALSE) +
+  ggtitle("EA ALL Cases & Controls -- SCORE vs EOS by AD group")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP != "Non-Atopic")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "EA ALL Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "tIgE", "EOS", "EA ALL Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EASI", "EOS", "EA ALL Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "RL", "EOS", "EA ALL Cases EH(+) & EH(-)")
+
+eos_phenos_cases %>% gg_r_scatter("tIgE", "EOS", "EOS", "EA ALL Cases EH(+) & EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH-")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "EA ALL Cases EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH+")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "EA ALL Cases EH(+)")
+
+eos_phenos_controls <- eos_phenos %>% filter(DIAGROUP == "Non-Atopic")
+eos_phenos_controls %>% gg_r_scatter("SCORE", "EOS", "EOS", "EA ALL Controls")
+
+eos_phenos_cases %>% gg_r_scatter("tIgE", "EOS", "SCORE", "EA ALL Cases")
+```
+
+
+
+```{r AA_MEGA_AD}
+eos_prs <- read_table("beta_score_eos_prs_AA.profile", col_types = "ccdddd")
+pheno <- read_tsv("ADRN_MEGA_AA_1113_adjusted_severity_phenotypes2.txt", col_types = "ddccddcdddddd")
+
+eos_phenos <- eos_prs %>%
+  mutate(SampleID = str_extract(IID, "\\d{10}") %>% as.double) %>%
+  left_join(pheno, by = "SampleID") %>%
+  filter(! is.na(Pheno_ADNA))
+
+eos_phenos %>%
+  mutate(IID = SampleID, true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_phenos %>%
+  mutate(IID = SampleID, Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+```
+
+```{r AA_MEGA_scatter}
+ggplot(eos_phenos, aes(x=EOS, y=SCORE, color = DIAGROUP)) +
+  geom_point() + geom_smooth(method=lm, se=FALSE) +
+  ggtitle("OMNI EA Cases & Controls -- SCORE vs AD")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP != "Non-Atopic")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA AA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "tIgE", "EOS", "MEGA AA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EASI", "EOS", "MEGA AA Cases EH(+) & EH(-)")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "RL", "EOS", "MEGA AA Cases EH(+) & EH(-)")
+
+eos_phenos_cases %>% gg_r_scatter("tIgE", "EOS", "EOS", "MEGA AA Cases EH(+) & EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH-")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA AA Cases EH(-)")
+
+eos_phenos_cases <- eos_phenos %>% filter(DIAGROUP == "ADEH+")
+eos_phenos_cases %>% gg_r_scatter("SCORE", "EOS", "EOS", "MEGA AA Cases EH(+)")
+
+eos_phenos_controls <- eos_phenos %>% filter(DIAGROUP == "Non-Atopic")
+eos_phenos_controls %>% gg_r_scatter("SCORE", "EOS", "tIgE", "MEGA AA Controls")
+
+eos_phenos_controls %>% gg_r_scatter("tIgE", "EOS", "SCORE", "MEGA AA Controls")
+```
+
+```{r AA_MEGA_grouped}
+eos_grouped_phenos <- eos_phenos %>%
+  mutate(RL_group = ifelse(RL < 14.526365, 1, 2),
+         # EASI_group = ifelse(EASI < 0.6993143, 1, 2)) %>%
+         # EASI_group = ifelse(EASI < 1.017539, 1, 2)) %>%
+         EASI_group = ifelse(EASI < 1.3142468, 1, 2),
+  
+         # tIgE_group = ifelse(tIgE < 1.3377471, 1, 2)) %>%
+         # tIgE_group = ifelse(tIgE < 1.9118220, 1, 2)) %>%
+         tIgE_group = ifelse(tIgE < 2.8043853, 1, 2)) %>%
+  filter(! is.na(tIgE_group))
+
+eos_grouped_phenos %>%
+  # mutate(IID = SampleID, true_phens = Pheno_ADNA, PRS = SCORE) %>%
+  # mutate(IID = SampleID, true_phens = RL_group, PRS = SCORE) %>%
+  mutate(IID = SampleID, true_phens = tIgE_group, PRS = SCORE) %>%
+  select(IID, true_phens, PRS) %>%
+  write_csv("prs_file.txt")
+
+eos_grouped_phenos %>%
+  mutate(IID = SampleID, Age = AGE, Sex = GENDER, ancestry = "European") %>%
+  select(IID, Age, Sex, EOS, RL, EASI, tIgE, ancestry) %>%
+  write_csv("severity_file.txt")
+
+source("PRS_violin_plot_cleaned.R")
+```
+
+
+
